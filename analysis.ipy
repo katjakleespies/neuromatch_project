@@ -2,7 +2,7 @@
 """
 Created on Thu Jul 15 16:05:59 2021
 
-@author: kleespies
+@authors: the cortical rainbows
 """
 
 #%% Human Connectome Project (HCP) Dataset loader
@@ -72,16 +72,16 @@ subjects = range(N_SUBJECTS)
 #if not os.path.exists(fname):
 #  !wget -qO $fname https://osf.io/s4h8j/download/
 #  !tar -xzf $fname -C $HCP_DIR --strip-components=1
-#  
+#
 #fname = "hcp_covariates.tgz"
 #if not os.path.exists(fname):
 #  !wget -qO $fname https://osf.io/x5p4g/download/
 #  !tar -xzf $fname -C $HCP_DIR --strip-components=1
-#  
+#
 #fname = f"{HCP_DIR}/atlas.npz"
 #if not os.path.exists(fname):
 #  !wget -qO $fname https://osf.io/j5kuc/download
-  
+
 ### Loading region information
 regions = np.load(f"{HCP_DIR}/regions.npy").T
 region_info = dict(
@@ -95,7 +95,7 @@ region_info = dict(
 ### fsaverage5 surface
 with np.load(f"{HCP_DIR}/atlas.npz") as dobj:
   atlas = dict(**dobj)
-  
+
 #%% Helper functions
 # Data loading
 def get_image_ids(name):
@@ -116,7 +116,7 @@ def get_image_ids(name):
 
 def load_timeseries(subject, name, runs=None, concat=True, remove_mean=True):
   """Load timeseries data for a single subject.
-  
+
   Args:
     subject (int): 0-based subject ID to load
     name (str) : Name of experiment ("rest" or name of task) to load
@@ -135,7 +135,7 @@ def load_timeseries(subject, name, runs=None, concat=True, remove_mean=True):
   elif isinstance(runs, int):
     runs = [runs]
 
-  # Get the first (1-based) run id for this experiment 
+  # Get the first (1-based) run id for this experiment
   offset = get_image_ids(name)[0]
 
   # Load each run's data
@@ -152,7 +152,7 @@ def load_timeseries(subject, name, runs=None, concat=True, remove_mean=True):
 
 def load_single_timeseries(subject, bold_run, remove_mean=True):
   """Load timeseries data for a single subject and single run.
-  
+
   Args:
     subject (int): 0-based subject ID to load
     bold_run (int): 1-based run index, across all tasks
@@ -298,11 +298,11 @@ def plot_logistic_regression(coef, vmax):
   plt_left = plotting.view_surf(fsaverage['infl_left'],
                      weights_left,
                      vmax=vmax)
-  
+
   plt_right = plotting.view_surf(fsaverage['infl_right'],
                      weights_right,
                      vmax=vmax)
-  
+
   return plt_left, plt_right
 
 def save_plots_0_vs_2(coef_array_0_vs_2, number):
@@ -310,14 +310,14 @@ def save_plots_0_vs_2(coef_array_0_vs_2, number):
         plt_left, plt_right = plot_logistic_regression(coef_array_0_vs_2[:, n], 0.05)
         plt_left.save_as_html(os.path.join('results', '0_vs_2', 'plot_left{:}'.format(n)))
         plt_right.save_as_html(os.path.join('results', '0_vs_2', 'plot_right{:}'.format(n)))
-        
+
 def save_plots_stimuli(coef_array_stimuli, number):
     for n in range(number):
         plt_left_body, plt_right_body = plot_logistic_regression(coef_array_stimuli[n, 0, :], 0.05)
         plt_left_faces, plt_right_faces = plot_logistic_regression(coef_array_stimuli[n, 1, :], 0.05)
         plt_left_places, plt_right_places = plot_logistic_regression(coef_array_stimuli[n, 2, :], 0.05)
         plt_left_tools, plt_right_tools = plot_logistic_regression(coef_array_stimuli[n, 3, :], 0.05)
-        
+
         plt_left_body.save_as_html(os.path.join('results', 'stimuli', 'plot_left_body{:}'.format(n)))
         plt_right_body.save_as_html(os.path.join('results', 'stimuli', 'plot_right_body{:}'.format(n)))
         plt_left_faces.save_as_html(os.path.join('results', 'stimuli', 'plot_left_faces{:}'.format(n)))
@@ -332,9 +332,9 @@ def save_plots_stimuli(coef_array_stimuli, number):
 timeseries_task = []
 for subject in subjects:
   timeseries_task.append(load_timeseries(subject, "WM", concat=False))
-  
+
 task = "WM"
-conditions = ["0bk_body", "0bk_faces", "0bk_places", "0bk_tools", "2bk_body", "2bk_faces", "2bk_places", "2bk_tools"] 
+conditions = ["0bk_body", "0bk_faces", "0bk_places", "0bk_tools", "2bk_body", "2bk_faces", "2bk_places", "2bk_tools"]
 cond_avgs = []
 for subject in subjects:
   # Get the average signal in each region for each condition
