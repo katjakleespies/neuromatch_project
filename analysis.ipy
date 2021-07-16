@@ -1,0 +1,419 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Jul 15 16:05:59 2021
+
+@author: kleespies
+"""
+
+#%% Human Connectome Project (HCP) Dataset loader
+# The HCP dataset comprises resting-state and task-based fMRI from a large sample of human subjects. The NMA-curated dataset includes time series data that has been preprocessed and spatially-downsampled by aggregating within 360 regions of interest.
+
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+from tqdm import tqdm
+
+from sklearn.linear_model import LogisticRegressionCV
+from sklearn.model_selection import train_test_split
+
+# Necessary for visualization
+from nilearn import plotting, datasets
+
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
+
+#@title Figure settings
+%matplotlib inline
+%config InlineBackend.figure_format = 'retina'
+plt.style.use("https://raw.githubusercontent.com/NeuromatchAcademy/course-content/master/nma.mplstyle")
+
+#%% Parameter setup
+# The download cells will store the data in nested directories starting here:
+HCP_DIR = "./hcp"
+if not os.path.isdir(HCP_DIR):
+  os.mkdir(HCP_DIR)
+
+# The data shared for NMA projects is a subset of the full HCP dataset
+N_SUBJECTS = 339
+
+# The data have already been aggregated into ROIs from the Glasesr parcellation
+N_PARCELS = 360
+
+# The acquisition parameters for all tasks were identical
+TR = 0.72  # Time resolution, in sec
+
+# The parcels are matched across hemispheres with the same order
+HEMIS = ["Right", "Left"]
+
+# Each experiment was repeated multiple times in each subject
+N_RUNS_REST = 4
+N_RUNS_TASK = 2
+
+# Time series data are organized by experiment, with each experiment
+# having an LR and RL (phase-encode direction) acquistion
+BOLD_NAMES = [
+  "rfMRI_REST1_LR", "rfMRI_REST1_RL",
+  "rfMRI_REST2_LR", "rfMRI_REST2_RL",
+  "tfMRI_MOTOR_RL", "tfMRI_MOTOR_LR",
+  "tfMRI_WM_RL", "tfMRI_WM_LR",
+  "tfMRI_EMOTION_RL", "tfMRI_EMOTION_LR",
+  "tfMRI_GAMBLING_RL", "tfMRI_GAMBLING_LR",
+  "tfMRI_LANGUAGE_RL", "tfMRI_LANGUAGE_LR",
+  "tfMRI_RELATIONAL_RL", "tfMRI_RELATIONAL_LR",
+  "tfMRI_SOCIAL_RL", "tfMRI_SOCIAL_LR"
+]
+
+# You may want to limit the subjects used during code development.
+# This will use all subjects:
+subjects = range(N_SUBJECTS)
+
+#%% Downloading data
+#fname = "hcp_task.tgz"
+#if not os.path.exists(fname):
+#  !wget -qO $fname https://osf.io/s4h8j/download/
+#  !tar -xzf $fname -C $HCP_DIR --strip-components=1
+#  
+#fname = "hcp_covariates.tgz"
+#if not os.path.exists(fname):
+#  !wget -qO $fname https://osf.io/x5p4g/download/
+#  !tar -xzf $fname -C $HCP_DIR --strip-components=1
+#  
+#fname = f"{HCP_DIR}/atlas.npz"
+#if not os.path.exists(fname):
+#  !wget -qO $fname https://osf.io/j5kuc/download
+  
+### Loading region information
+regions = np.load(f"{HCP_DIR}/regions.npy").T
+region_info = dict(
+    name=regions[0].tolist(),
+    network=regions[1],
+    myelin=regions[2].astype(float),
+)
+
+#print(region_info['name'])
+
+### fsaverage5 surface
+with np.load(f"{HCP_DIR}/atlas.npz") as dobj:
+  atlas = dict(**dobj)
+  
+#%% Helper functions
+# Data loading
+def get_image_ids(name):
+  """Get the 1-based image indices for runs in a given experiment.
+
+    Args:
+      name (str) : Name of experiment ("rest" or name of task) to load
+    Returns:
+      run_ids (list of int) : Numeric ID for experiment image files
+
+  """
+  run_ids = [
+    i for i, code in enumerate(BOLD_NAMES, 1) if name.upper() in code
+  ]
+  if not run_ids:
+    raise ValueError(f"Found no data for '{name}''")
+  return run_ids
+
+def load_timeseries(subject, name, runs=None, concat=True, remove_mean=True):
+  """Load timeseries data for a single subject.
+  
+  Args:
+    subject (int): 0-based subject ID to load
+    name (str) : Name of experiment ("rest" or name of task) to load
+    run (None or int or list of ints): 0-based run(s) of the task to load,
+      or None to load all runs.
+    concat (bool) : If True, concatenate multiple runs in time
+    remove_mean (bool) : If True, subtract the parcel-wise mean
+
+  Returns
+    ts (n_parcel x n_tp array): Array of BOLD data values
+
+  """
+  # Get the list relative 0-based index of runs to use
+  if runs is None:
+    runs = range(N_RUNS_REST) if name == "rest" else range(N_RUNS_TASK)
+  elif isinstance(runs, int):
+    runs = [runs]
+
+  # Get the first (1-based) run id for this experiment 
+  offset = get_image_ids(name)[0]
+
+  # Load each run's data
+  bold_data = [
+      load_single_timeseries(subject, offset + run, remove_mean) for run in runs
+  ]
+
+  # Optionally concatenate in time
+  if concat:
+    bold_data = np.concatenate(bold_data, axis=-1)
+
+  return bold_data
+
+
+def load_single_timeseries(subject, bold_run, remove_mean=True):
+  """Load timeseries data for a single subject and single run.
+  
+  Args:
+    subject (int): 0-based subject ID to load
+    bold_run (int): 1-based run index, across all tasks
+    remove_mean (bool): If True, subtract the parcel-wise mean
+
+  Returns
+    ts (n_parcel x n_timepoint array): Array of BOLD data values
+
+  """
+  bold_path = f"{HCP_DIR}/subjects/{subject}/timeseries"
+  bold_file = f"bold{bold_run}_Atlas_MSMAll_Glasser360Cortical.npy"
+  ts = np.load(f"{bold_path}/{bold_file}")
+  if remove_mean:
+    ts -= ts.mean(axis=1, keepdims=True)
+  return ts
+
+def load_evs(subject, name, condition):
+  """Load EV (explanatory variable) data for one task condition.
+
+  Args:
+    subject (int): 0-based subject ID to load
+    name (str) : Name of task
+    condition (str) : Name of condition
+
+  Returns
+    evs (list of dicts): A dictionary with the onset, duration, and amplitude
+      of the condition for each run.
+
+  """
+  evs = []
+  for id in get_image_ids(name):
+    task_key = BOLD_NAMES[id - 1]
+    ev_file = f"{HCP_DIR}/subjects/{subject}/EVs/{task_key}/{condition}.txt"
+    ev_array = np.loadtxt(ev_file, ndmin=2, unpack=True)
+    ev = dict(zip(["onset", "duration", "amplitude"], ev_array))
+    evs.append(ev)
+  return evs
+
+# Task-based analysis
+def condition_frames(run_evs, skip=0):
+  """Identify timepoints corresponding to a given condition in each run.
+
+  Args:
+    run_evs (list of dicts) : Onset and duration of the event, per run
+    skip (int) : Ignore this many frames at the start of each trial, to account
+      for hemodynamic lag
+
+  Returns:
+    frames_list (list of 1D arrays): Flat arrays of frame indices, per run
+
+  """
+  frames_list = []
+  for ev in run_evs:
+
+    # Determine when trial starts, rounded down
+    start = np.floor(ev["onset"] / TR).astype(int)
+
+    # Use trial duration to determine how many frames to include for trial
+    duration = np.ceil(ev["duration"] / TR).astype(int)
+
+    # Take the range of frames that correspond to this specific trial
+    frames = [s + np.arange(skip, d) for s, d in zip(start, duration)]
+
+    frames_list.append(np.concatenate(frames))
+
+  return frames_list
+
+
+def selective_average(timeseries_data, ev, skip=0):
+  """Take the temporal mean across frames for a given condition.
+
+  Args:
+    timeseries_data (array or list of arrays): n_parcel x n_tp arrays
+    ev (dict or list of dicts): Condition timing information
+    skip (int) : Ignore this many frames at the start of each trial, to account
+      for hemodynamic lag
+
+  Returns:
+    avg_data (1D array): Data averagted across selected image frames based
+    on condition timing
+
+  """
+  # Ensure that we have lists of the same length
+  if not isinstance(timeseries_data, list):
+    timeseries_data = [timeseries_data]
+  if not isinstance(ev, list):
+    ev = [ev]
+  if len(timeseries_data) != len(ev):
+    raise ValueError("Length of `timeseries_data` and `ev` must match.")
+
+  # Identify the indices of relevant frames
+  frames = condition_frames(ev, skip)
+
+  # Select the frames from each image
+  selected_data = []
+  for run_data, run_frames in zip(timeseries_data, frames):
+    run_frames = run_frames[run_frames < run_data.shape[1]]
+    selected_data.append(run_data[:, run_frames])
+
+  # Take the average in each parcel
+  avg_data = np.concatenate(selected_data, axis=-1).mean(axis=-1)
+
+  return avg_data
+
+#%% Task functions
+def logistic_regression_0_vs_2(X, y, number):
+  clf_list = []
+  acc_array = np.full((number), np.nan)
+  coef_array = np.full((360, number), np.nan)
+  for n in tqdm(range(number)):
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.125)
+    clf = LogisticRegressionCV(cv=10, penalty='l1', solver='saga', max_iter=10000).fit(X_train, y_train)
+    clf_list.append(clf)
+
+    acc = clf.score(X_test, y_test)
+    acc_array[n] = acc
+
+    coef = clf.coef_.T.reshape(-1)
+    coef_array[:, n] = coef
+  return clf_list, acc_array, coef_array
+
+def logistic_regression_stimuli(X, y, number):
+  clf_list = []
+  acc_array = np.full((number), np.nan)
+  coef_array = np.full((number, 4, 360), np.nan)
+  for n in tqdm(range(number)):
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.125)
+    clf = LogisticRegressionCV(cv=10, penalty='l1', solver='saga', max_iter=10000).fit(X_train, y_train)
+    clf_list.append(clf)
+
+    acc = clf.score(X_test, y_test)
+    acc_array[n] = acc
+
+    coef = clf.coef_
+    coef_array[n, :, :] = coef
+  return clf_list, acc_array, coef_array
+
+def plot_logistic_regression(coef, vmax):
+  fsaverage = datasets.fetch_surf_fsaverage()
+  weights_left = coef[atlas["labels_L"]]
+  weights_right = coef[atlas["labels_R"]]
+
+  plt_left = plotting.view_surf(fsaverage['infl_left'],
+                     weights_left,
+                     vmax=vmax)
+  
+  plt_right = plotting.view_surf(fsaverage['infl_right'],
+                     weights_right,
+                     vmax=vmax)
+  
+  return plt_left, plt_right
+
+def save_plots_0_vs_2(coef_array_0_vs_2, number):
+    for n in range(number):
+        plt_left, plt_right = plot_logistic_regression(coef_array_0_vs_2[:, n], 0.05)
+        plt_left.save_as_html(os.path.join('results', '0_vs_2', 'plot_left{:}'.format(n)))
+        plt_right.save_as_html(os.path.join('results', '0_vs_2', 'plot_right{:}'.format(n)))
+        
+def save_plots_stimuli(coef_array_stimuli, number):
+    for n in range(number):
+        plt_left_body, plt_right_body = plot_logistic_regression(coef_array_stimuli[n, 0, :], 0.05)
+        plt_left_faces, plt_right_faces = plot_logistic_regression(coef_array_stimuli[n, 1, :], 0.05)
+        plt_left_places, plt_right_places = plot_logistic_regression(coef_array_stimuli[n, 2, :], 0.05)
+        plt_left_tools, plt_right_tools = plot_logistic_regression(coef_array_stimuli[n, 3, :], 0.05)
+        
+        plt_left_body.save_as_html(os.path.join('results', 'stimuli', 'plot_left_body{:}'.format(n)))
+        plt_right_body.save_as_html(os.path.join('results', 'stimuli', 'plot_right_body{:}'.format(n)))
+        plt_left_faces.save_as_html(os.path.join('results', 'stimuli', 'plot_left_faces{:}'.format(n)))
+        plt_right_faces.save_as_html(os.path.join('results', 'stimuli', 'plot_right_faces{:}'.format(n)))
+        plt_left_places.save_as_html(os.path.join('results', 'stimuli', 'plot_left_places{:}'.format(n)))
+        plt_right_places.save_as_html(os.path.join('results', 'stimuli', 'plot_right_places{:}'.format(n)))
+        plt_left_tools.save_as_html(os.path.join('results', 'stimuli', 'plot_left_tools{:}'.format(n)))
+        plt_right_tools.save_as_html(os.path.join('results', 'stimuli', 'plot_right_tools{:}'.format(n)))
+
+#%% Analysis preparation
+# Prepare time-series
+timeseries_task = []
+for subject in subjects:
+  timeseries_task.append(load_timeseries(subject, "WM", concat=False))
+  
+task = "WM"
+conditions = ["0bk_body", "0bk_faces", "0bk_places", "0bk_tools", "2bk_body", "2bk_faces", "2bk_places", "2bk_tools"] 
+cond_avgs = []
+for subject in subjects:
+  # Get the average signal in each region for each condition
+  evs = [load_evs(subject, task, cond) for cond in conditions]
+  avgs = [selective_average(timeseries_task[subject], ev) for ev in evs]
+  cond_avgs.append(avgs)
+cond_avgs = np.asarray(cond_avgs)
+
+# Create design matrix
+X = np.empty((cond_avgs.shape[0] * 8, cond_avgs.shape[2]))
+for i in range(cond_avgs.shape[0]):
+  X[(i*8):((i*8)+8), :] = cond_avgs[i, :, :]
+#X = X[:50]
+
+#%% 0 vs 2Back analysis
+# 0 vs 2Back labels
+print('\n--------------------------------------------------------------------\n0 vs 2 classification starting\n--------------------------------------------------------------------')
+y_0_vs_2 = np.full((1), np.nan)
+y_0 = np.full((4), 0)
+y_2 = np.full((4), 1)
+for i in range(cond_avgs.shape[0]):
+  y_0_vs_2 = np.hstack((y_0_vs_2, y_0, y_2))
+y_0_vs_2 = np.delete(y_0_vs_2, 0)
+#y_0_vs_2 = y_0_vs_2[:50]
+
+# 0 vs 2Back classification
+np.random.seed(0)
+clf_list_0_vs_2, acc_array_0_vs_2, coef_array_0_vs_2 = logistic_regression_0_vs_2(X, y_0_vs_2, 10)
+
+np.save(os.path.join('results', '0_vs_2', 'accuracies'), acc_array_0_vs_2)
+np.save(os.path.join('results', '0_vs_2', 'coefficients'), coef_array_0_vs_2)
+
+print('\nAccuracies 0 vs 2:', acc_array_0_vs_2)
+print('Mean accuracy 0 vs 2:', np.mean(acc_array_0_vs_2))
+print('Standard deviation accuracies 0 vs 2:', np.std(acc_array_0_vs_2), '\n\n--------------------------------------------------------------------\n')
+
+save_plots_0_vs_2(coef_array_0_vs_2, 10)
+
+coefs_0_vs_2_averaged = np.mean(coef_array_0_vs_2, axis = 1)
+coefs_0_vs_2_std = np.std(coef_array_0_vs_2, axis = 1)
+
+plt_left_averaged, plt_right_averaged = plot_logistic_regression(coefs_0_vs_2_averaged, 0.05)
+plt_left_averaged.save_as_html(os.path.join('results', '0_vs_2', 'plot_left_averaged'))
+plt_right_averaged.save_as_html(os.path.join('results', '0_vs_2', 'plot_right_averaged'))
+
+#%% Stimuli analysis
+# Stimuli labels
+print('\n--------------------------------------------------------------------\nStimuli classification starting\n--------------------------------------------------------------------')
+y_stimuli = np.full((1), np.nan)
+y_labels = np.array((1, 2, 3, 4, 1, 2, 3, 4))
+for i in range(cond_avgs.shape[0]):
+  y_stimuli = np.hstack((y_stimuli, y_labels))
+y_stimuli = np.delete(y_stimuli, 0)
+#y_stimuli = y_stimuli[:50]
+
+# Stimuli classification
+np.random.seed(0)
+clf_list_stimuli, acc_array_stimuli, coef_array_stimuli = logistic_regression_stimuli(X, y_stimuli, 10)
+
+np.save(os.path.join('results', 'stimuli', 'accuracies'), acc_array_stimuli)
+np.save(os.path.join('results', 'stimuli', 'coefficients'), coef_array_stimuli)
+
+print('\nAccuracies stimuli:', acc_array_stimuli)
+print('Mean accuracy stimuli:', np.mean(acc_array_stimuli))
+print('Standard deviation accuracies stimuli:', np.std(acc_array_stimuli), '\n\n--------------------------------------------------------------------\n')
+
+save_plots_stimuli(coef_array_stimuli, 10)
+coefs_stimuli_averaged = np.mean(coef_array_stimuli, axis = 0)
+coefs_stimuli_std = np.std(coef_array_stimuli, axis = 0)
+
+plt_left_body_averaged, plt_right_body_averaged = plot_logistic_regression(coefs_stimuli_averaged[0, :], 0.05)
+plt_left_faces_averaged, plt_right_faces_averaged = plot_logistic_regression(coefs_stimuli_averaged[1, :], 0.05)
+plt_left_places_averaged, plt_right_places_averaged = plot_logistic_regression(coefs_stimuli_averaged[2, :], 0.05)
+plt_left_tools_averaged, plt_right_tools_averaged = plot_logistic_regression(coefs_stimuli_averaged[3, :], 0.05)
+plt_left_body_averaged.save_as_html(os.path.join('results', 'stimuli', 'plot_left_body_averaged'))
+plt_right_body_averaged.save_as_html(os.path.join('results', 'stimuli', 'plot_right_body_averaged'))
+plt_left_faces_averaged.save_as_html(os.path.join('results', 'stimuli', 'plot_left_faces_averaged'))
+plt_right_faces_averaged.save_as_html(os.path.join('results', 'stimuli', 'plot_right_faces_averaged'))
+plt_left_places_averaged.save_as_html(os.path.join('results', 'stimuli', 'plot_left_places_averaged'))
+plt_right_places_averaged.save_as_html(os.path.join('results', 'stimuli', 'plot_right_places_averaged'))
+plt_left_tools_averaged.save_as_html(os.path.join('results', 'stimuli', 'plot_left_tools_averaged'))
+plt_right_tools_averaged.save_as_html(os.path.join('results', 'stimuli', 'plot_right_tools_averaged'))
