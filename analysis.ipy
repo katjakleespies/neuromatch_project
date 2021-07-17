@@ -362,7 +362,7 @@ y_0_vs_2 = np.delete(y_0_vs_2, 0)
 
 # 0 vs 2Back classification
 np.random.seed(0)
-clf_list_0_vs_2, acc_array_0_vs_2, coef_array_0_vs_2 = logistic_regression_0_vs_2(X, y_0_vs_2, 10)
+clf_list_0_vs_2, acc_array_0_vs_2, coef_array_0_vs_2 = logistic_regression_0_vs_2(X, y_0_vs_2, 50)
 
 np.save(os.path.join('results', '0_vs_2', 'accuracies'), acc_array_0_vs_2)
 np.save(os.path.join('results', '0_vs_2', 'coefficients'), coef_array_0_vs_2)
@@ -371,7 +371,7 @@ print('\nAccuracies 0 vs 2:', acc_array_0_vs_2)
 print('Mean accuracy 0 vs 2:', np.mean(acc_array_0_vs_2))
 print('Standard deviation accuracies 0 vs 2:', np.std(acc_array_0_vs_2), '\n\n--------------------------------------------------------------------\n')
 
-save_plots_0_vs_2(coef_array_0_vs_2, 10)
+save_plots_0_vs_2(coef_array_0_vs_2, 50)
 
 coefs_0_vs_2_averaged = np.mean(coef_array_0_vs_2, axis = 1)
 coefs_0_vs_2_std = np.std(coef_array_0_vs_2, axis = 1)
@@ -392,7 +392,7 @@ y_stimuli = np.delete(y_stimuli, 0)
 
 # Stimuli classification
 np.random.seed(0)
-clf_list_stimuli, acc_array_stimuli, coef_array_stimuli = logistic_regression_stimuli(X, y_stimuli, 10)
+clf_list_stimuli, acc_array_stimuli, coef_array_stimuli = logistic_regression_stimuli(X, y_stimuli, 50)
 
 np.save(os.path.join('results', 'stimuli', 'accuracies'), acc_array_stimuli)
 np.save(os.path.join('results', 'stimuli', 'coefficients'), coef_array_stimuli)
@@ -401,7 +401,7 @@ print('\nAccuracies stimuli:', acc_array_stimuli)
 print('Mean accuracy stimuli:', np.mean(acc_array_stimuli))
 print('Standard deviation accuracies stimuli:', np.std(acc_array_stimuli), '\n\n--------------------------------------------------------------------\n')
 
-save_plots_stimuli(coef_array_stimuli, 10)
+save_plots_stimuli(coef_array_stimuli, 50)
 coefs_stimuli_averaged = np.mean(coef_array_stimuli, axis = 0)
 coefs_stimuli_std = np.std(coef_array_stimuli, axis = 0)
 
