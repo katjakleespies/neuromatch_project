@@ -11,10 +11,13 @@ Created on Thu Jul 15 16:05:59 2021
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+#import cmasher as cmr
 from tqdm import tqdm
 
 from sklearn.linear_model import LogisticRegressionCV
 from sklearn.model_selection import train_test_split
+
+from scipy import stats
 
 # Necessary for visualization
 from nilearn import plotting, datasets
@@ -257,7 +260,22 @@ def selective_average(timeseries_data, ev, skip=0):
 
   return avg_data
 
-#%% Task functions
+def plot_logistic_regression(coef, vmax):
+  fsaverage = datasets.fetch_surf_fsaverage()
+  weights_left = coef[atlas["labels_L"]]
+  weights_right = coef[atlas["labels_R"]]
+
+  plt_left = plotting.view_surf(fsaverage['infl_left'],
+                     weights_left,
+                     vmax=vmax)
+
+  plt_right = plotting.view_surf(fsaverage['infl_right'],
+                     weights_right,
+                     vmax=vmax)
+
+  return plt_left, plt_right
+
+#%% Classification functions 0 vs 2 and stimuli
 def logistic_regression_0_vs_2(X, y, number):
   clf_list = []
   acc_array = np.full((number), np.nan)
@@ -290,21 +308,6 @@ def logistic_regression_stimuli(X, y, number):
     coef_array[n, :, :] = coef
   return clf_list, acc_array, coef_array
 
-def plot_logistic_regression(coef, vmax):
-  fsaverage = datasets.fetch_surf_fsaverage()
-  weights_left = coef[atlas["labels_L"]]
-  weights_right = coef[atlas["labels_R"]]
-
-  plt_left = plotting.view_surf(fsaverage['infl_left'],
-                     weights_left,
-                     vmax=vmax)
-
-  plt_right = plotting.view_surf(fsaverage['infl_right'],
-                     weights_right,
-                     vmax=vmax)
-
-  return plt_left, plt_right
-
 def save_plots_0_vs_2(coef_array_0_vs_2, number):
     for n in range(number):
         plt_left, plt_right = plot_logistic_regression(coef_array_0_vs_2[:, n], 0.05)
@@ -327,7 +330,7 @@ def save_plots_stimuli(coef_array_stimuli, number):
         plt_left_tools.save_as_html(os.path.join('results', 'stimuli', 'plot_left_tools{:}'.format(n)))
         plt_right_tools.save_as_html(os.path.join('results', 'stimuli', 'plot_right_tools{:}'.format(n)))
 
-#%% Analysis preparation
+#%% Analysis preparation 0 vs 2 and stimulus classification
 # Prepare time-series
 timeseries_task = []
 for subject in subjects:
@@ -362,23 +365,39 @@ y_0_vs_2 = np.delete(y_0_vs_2, 0)
 
 # 0 vs 2Back classification
 np.random.seed(0)
-clf_list_0_vs_2, acc_array_0_vs_2, coef_array_0_vs_2 = logistic_regression_0_vs_2(X, y_0_vs_2, 50)
+number_clf = 50
+clf_list_0_vs_2, acc_array_0_vs_2, coef_array_0_vs_2 = logistic_regression_0_vs_2(X, y_0_vs_2, number_clf)
 
-np.save(os.path.join('results', '0_vs_2', 'accuracies'), acc_array_0_vs_2)
-np.save(os.path.join('results', '0_vs_2', 'coefficients'), coef_array_0_vs_2)
-
+#%% 0 vs 2 post-stats
+print('\n--------------------------------------------------------------------\n\nResults report 0 vs 2:')
 print('\nAccuracies 0 vs 2:', acc_array_0_vs_2)
 print('Mean accuracy 0 vs 2:', np.mean(acc_array_0_vs_2))
-print('Standard deviation accuracies 0 vs 2:', np.std(acc_array_0_vs_2), '\n\n--------------------------------------------------------------------\n')
+print('Standard deviation accuracies 0 vs 2:', np.std(acc_array_0_vs_2))
 
-save_plots_0_vs_2(coef_array_0_vs_2, 50)
+t_0_vs_2, p_0_vs_2 = stats.ttest_1samp(acc_array_0_vs_2, 50)
+print('P-value of one-sample t-test with population mean = 50 0 vs 2:', '{:.5f}'.format(p_0_vs_2), '\n\n--------------------------------------------------------------------\n')
 
 coefs_0_vs_2_averaged = np.mean(coef_array_0_vs_2, axis = 1)
 coefs_0_vs_2_std = np.std(coef_array_0_vs_2, axis = 1)
 
-plt_left_averaged, plt_right_averaged = plot_logistic_regression(coefs_0_vs_2_averaged, 0.05)
+t_coefs_0_vs_2, p_coefs_0_vs_2 = stats.ttest_1samp(coef_array_0_vs_2, 0, axis = 1)
+p_coefs_0_vs_2_sig = p_coefs_0_vs_2 < .001
+coefs_0_vs_2_averaged_sig = coefs_0_vs_2_averaged * p_coefs_0_vs_2_sig
+
+#%% 0 vs 2 save results and figures
+np.save(os.path.join('results', '0_vs_2', 'accuracies'), acc_array_0_vs_2)
+np.save(os.path.join('results', '0_vs_2', 'coefficients'), coef_array_0_vs_2)
+np.save(os.path.join('results', '0_vs_2', 'coefficients_sig'), coefs_0_vs_2_averaged_sig)
+
+save_plots_0_vs_2(coef_array_0_vs_2, number_clf)
+
+plt_left_averaged, plt_right_averaged = plot_logistic_regression(coefs_0_vs_2_averaged, 0.03)
 plt_left_averaged.save_as_html(os.path.join('results', '0_vs_2', 'plot_left_averaged'))
 plt_right_averaged.save_as_html(os.path.join('results', '0_vs_2', 'plot_right_averaged'))
+
+plt_left_0_vs_2_sig, plt_right_0_vs_2_sig = plot_logistic_regression(coefs_0_vs_2_averaged_sig, 0.03)
+plt_left_0_vs_2_sig.save_as_html(os.path.join('results', '0_vs_2', 'plot_left_significant'))
+plt_right_0_vs_2_sig.save_as_html(os.path.join('results', '0_vs_2', 'plot_right_significant'))
 
 #%% Stimuli analysis
 # Stimuli labels
@@ -392,18 +411,31 @@ y_stimuli = np.delete(y_stimuli, 0)
 
 # Stimuli classification
 np.random.seed(0)
-clf_list_stimuli, acc_array_stimuli, coef_array_stimuli = logistic_regression_stimuli(X, y_stimuli, 50)
+number_clf = 50
+clf_list_stimuli, acc_array_stimuli, coef_array_stimuli = logistic_regression_stimuli(X, y_stimuli, number_clf)
+
+#%% Stimuli post-stats
+print('\n--------------------------------------------------------------------\n\nResults report stimuli:')
+print('\nAccuracies stimuli:', acc_array_stimuli)
+print('Mean accuracy stimuli:', np.mean(acc_array_stimuli))
+print('Standard deviation accuracies stimuli:', np.std(acc_array_stimuli))
+
+t_stimuli, p_stimuli = stats.ttest_1samp(acc_array_stimuli, 50)
+print('P-value of one-sample t-test with population mean = 50 stimuli:', '{:.5f}'.format(p_stimuli), '\n\n--------------------------------------------------------------------\n')
+
+coefs_stimuli_averaged = np.mean(coef_array_stimuli, axis = 0)
+coefs_stimuli_std = np.std(coef_array_stimuli, axis = 0)
+
+t_coefs_stimuli, p_coefs_stimuli = stats.ttest_1samp(coef_array_stimuli, 0, axis = 0)
+p_coefs_stimuli_sig = p_coefs_stimuli < .001
+coefs_stimuli_averaged_sig = coefs_stimuli_averaged * p_coefs_stimuli_sig
+
+#%% Stimuli save results and figures
+save_plots_stimuli(coef_array_stimuli, number_clf)
 
 np.save(os.path.join('results', 'stimuli', 'accuracies'), acc_array_stimuli)
 np.save(os.path.join('results', 'stimuli', 'coefficients'), coef_array_stimuli)
-
-print('\nAccuracies stimuli:', acc_array_stimuli)
-print('Mean accuracy stimuli:', np.mean(acc_array_stimuli))
-print('Standard deviation accuracies stimuli:', np.std(acc_array_stimuli), '\n\n--------------------------------------------------------------------\n')
-
-save_plots_stimuli(coef_array_stimuli, 50)
-coefs_stimuli_averaged = np.mean(coef_array_stimuli, axis = 0)
-coefs_stimuli_std = np.std(coef_array_stimuli, axis = 0)
+np.save(os.path.join('results', 'stimuli', 'coefficients_sig'), coefs_stimuli_averaged_sig)
 
 plt_left_body_averaged, plt_right_body_averaged = plot_logistic_regression(coefs_stimuli_averaged[0, :], 0.05)
 plt_left_faces_averaged, plt_right_faces_averaged = plot_logistic_regression(coefs_stimuli_averaged[1, :], 0.05)
@@ -417,3 +449,546 @@ plt_left_places_averaged.save_as_html(os.path.join('results', 'stimuli', 'plot_l
 plt_right_places_averaged.save_as_html(os.path.join('results', 'stimuli', 'plot_right_places_averaged'))
 plt_left_tools_averaged.save_as_html(os.path.join('results', 'stimuli', 'plot_left_tools_averaged'))
 plt_right_tools_averaged.save_as_html(os.path.join('results', 'stimuli', 'plot_right_tools_averaged'))
+
+plt_left_body_sig, plt_right_body_sig = plot_logistic_regression(coefs_stimuli_averaged_sig[0, :], 0.05)
+plt_left_faces_sig, plt_right_faces_sig = plot_logistic_regression(coefs_stimuli_averaged_sig[1, :], 0.05)
+plt_left_places_sig, plt_right_places_sig = plot_logistic_regression(coefs_stimuli_averaged_sig[2, :], 0.05)
+plt_left_tools_sig, plt_right_tools_sig = plot_logistic_regression(coefs_stimuli_averaged_sig[3, :], 0.05)
+plt_left_body_sig.save_as_html(os.path.join('results', 'stimuli', 'plot_left_body_significant'))
+plt_right_body_sig.save_as_html(os.path.join('results', 'stimuli', 'plot_right_body_significant'))
+plt_left_faces_sig.save_as_html(os.path.join('results', 'stimuli', 'plot_left_faces_significant'))
+plt_right_faces_sig.save_as_html(os.path.join('results', 'stimuli', 'plot_right_faces_significant'))
+plt_left_places_sig.save_as_html(os.path.join('results', 'stimuli', 'plot_left_places_significant'))
+plt_right_places_sig.save_as_html(os.path.join('results', 'stimuli', 'plot_right_places_significant'))
+plt_left_tools_sig.save_as_html(os.path.join('results', 'stimuli', 'plot_left_tools_significant'))
+plt_right_tools_sig.save_as_html(os.path.join('results', 'stimuli', 'plot_right_tools_significant'))
+
+#%% Helper functions performance prediction
+def selective_average_performance(timeseries_data, ev, skip=0):
+  """Take the temporal mean across frames for a given condition.
+
+  Args:
+    timeseries_data (array or list of arrays): n_parcel x n_tp arrays
+    ev (dict or list of dicts): Condition timing information
+    skip (int) : Ignore this many frames at the start of each trial, to account
+      for hemodynamic lag
+
+  Returns:
+    avg_data (1D array): Data averagted across selected image frames based
+    on condition timing
+
+  """
+  # Ensure that we have lists of the same length
+  if not isinstance(timeseries_data, list):
+    timeseries_data = [timeseries_data]
+  if not isinstance(ev, list):
+    ev = [ev]
+  if len(timeseries_data) != len(ev):
+    raise ValueError("Length of `timeseries_data` and `ev` must match.")
+
+  # Identify the indices of relevant frames
+  frames = condition_frames_performance(ev, skip)
+
+  # Select the frames from each image
+  selected_data = []
+  for run_data, run_frames in zip(timeseries_data, frames):
+    #if run_frames == []:
+    if len(run_frames) == 0:
+        continue
+    run_frames = run_frames[run_frames < run_data.shape[1]]
+    selected_data.append(run_data[:, run_frames])
+
+  # Take the average in each parcel
+  if len(selected_data) == 0:
+      avg_data = np.full((360,), np.nan)
+  else:
+      avg_data = np.concatenate(selected_data, axis=-1).mean(axis=-1)
+  
+  return avg_data
+
+def condition_frames_performance(run_evs, skip=0):
+  """Identify timepoints corresponding to a given condition in each run.
+
+  Args:
+    run_evs (list of dicts) : Onset and duration of the event, per run
+    skip (int) : Ignore this many frames at the start of each trial, to account
+      for hemodynamic lag
+
+  Returns:
+    frames_list (list of 1D arrays): Flat arrays of frame indices, per run
+
+  """
+  frames_list = []
+  for ev in run_evs:
+    if len(ev["onset"]) == 0:
+        frames = []
+        frames_list.append(frames)
+    elif len(ev["onset"]) > 0:
+        # Determine when trial starts, rounded down
+        start = np.floor(ev["onset"] / TR).astype(int)
+    
+        # Use trial duration to determine how many frames to include for trial
+        duration = np.ceil(ev["duration"] / TR).astype(int)
+    
+        # Take the range of frames that correspond to this specific trial
+        frames = [s + np.arange(skip, d) for s, d in zip(start, duration)]
+    
+        frames_list.append(np.concatenate(frames))
+
+  return frames_list
+
+#%% Analysis preparation performance prediction
+# Prepare time-series
+timeseries_task = []
+for subject in subjects:
+  timeseries_task.append(load_timeseries(subject, "WM", concat=False))
+
+task = "WM"
+conditions = ["all_bk_err", "all_bk_cor"]
+cond_avgs = []
+for subject in subjects:
+  # Get the average signal in each region for each condition
+  evs = [load_evs(subject, task, cond) for cond in conditions]
+  
+  n_err_run0 = len(evs[0][0]['onset'])
+  n_err_run1 = len(evs[0][1]['onset'])
+  
+  n_corr_run0 = len(evs[1][0]['onset'])
+  n_corr_run1 = len(evs[1][1]['onset'])
+  
+  indices_run0 = np.random.choice(n_corr_run0, n_err_run0)
+  indices_run1 = np.random.choice(n_corr_run1, n_err_run1)
+  
+  amplitude_random_run0 = evs[1][0]['amplitude'][indices_run0]
+  duration_random_run0 = evs[1][0]['duration'][indices_run0]
+  onset_random_run0 = evs[1][0]['onset'][indices_run0]
+  
+  amplitude_random_run1 = evs[1][1]['amplitude'][indices_run1]
+  duration_random_run1 = evs[1][1]['duration'][indices_run1]
+  onset_random_run1 = evs[1][1]['onset'][indices_run1]
+  
+  zero_dict = {
+      'onset': [],
+      'duration': [],
+      'amplitude': []
+      }
+  
+  if (n_err_run0 == 0) & (n_err_run1 == 0):
+      dict_err_run0 = zero_dict
+      dict_err_run1 = zero_dict
+      
+  if (n_err_run0 == 0) & (n_err_run1 > 0):
+      dict_err_run0 = zero_dict
+      dict_err_run1 = evs[0][1]
+      
+  if (n_err_run0 > 0) & (n_err_run1 == 0):
+      dict_err_run0 = evs[0][0]
+      dict_err_run1 = zero_dict
+      
+  if (n_err_run0 > 0) & (n_err_run1 > 0):
+      dict_err_run0 = evs[0][0]
+      dict_err_run1 = evs[0][1]
+
+  dict_corr_run1 = {
+     'onset': onset_random_run1,
+     'duration': duration_random_run1,
+     'amplitude': amplitude_random_run1
+     }
+      
+  dict_corr_run0 = {
+      'onset': onset_random_run0,
+      'duration': duration_random_run0,
+      'amplitude': amplitude_random_run0
+      }
+  new_evs = list((list((dict_err_run0, dict_err_run1)), list((dict_corr_run0, dict_corr_run1))))
+  
+  avgs = [selective_average_performance(timeseries_task[subject], ev) for ev in new_evs]
+  cond_avgs.append(avgs)
+cond_avgs = np.asarray(cond_avgs)
+
+#%% Classification functions performance prediction
+
+def logistic_regression_error_vs_correct(X, y, number):
+  clf_list = []
+  acc_array = np.full((number), np.nan)
+  coef_array = np.full((360, number), np.nan)
+  for n in tqdm(range(number)):
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.125)
+    clf = LogisticRegressionCV(cv=10, penalty='l1', solver='saga', max_iter=10000).fit(X_train, y_train)
+    clf_list.append(clf)
+
+    acc = clf.score(X_test, y_test)
+    acc_array[n] = acc
+
+    coef = clf.coef_.T.reshape(-1)
+    coef_array[:, n] = coef
+  return clf_list, acc_array, coef_array
+
+def save_plots_error_vs_correct(coef_array_error_vs_correct, number):
+    for n in range(number):
+        plt_left, plt_right = plot_logistic_regression(coef_array_error_vs_correct[:, n], 0.025)
+        plt_left.save_as_html(os.path.join('results', 'error_vs_correct', 'plot_left{:}'.format(n)))
+        plt_right.save_as_html(os.path.join('results', 'error_vs_correct', 'plot_right{:}'.format(n)))
+        
+def save_plots_error_vs_correct_first_half(coef_array_error_vs_correct_first_half, number):
+    for n in range(number):
+        plt_left, plt_right = plot_logistic_regression(coef_array_error_vs_correct_first_half[:, n], 0.025)
+        plt_left.save_as_html(os.path.join('results', 'error_vs_correct', 'first_half', 'plot_left{:}'.format(n)))
+        plt_right.save_as_html(os.path.join('results', 'error_vs_correct', 'first_half', 'plot_right{:}'.format(n)))
+        
+def save_plots_error_vs_correct_second_half(coef_array_error_vs_correct_second_half, number):
+    for n in range(number):
+        plt_left, plt_right = plot_logistic_regression(coef_array_error_vs_correct_second_half[:, n], 0.025)
+        plt_left.save_as_html(os.path.join('results', 'error_vs_correct', 'second_half', 'plot_left{:}'.format(n)))
+        plt_right.save_as_html(os.path.join('results', 'error_vs_correct', 'second_half', 'plot_right{:}'.format(n)))
+
+#%% Performance prediction analysis
+
+print('\n--------------------------------------------------------------------\nPerformance prediction classification starting\n--------------------------------------------------------------------')
+
+# Create design matrix
+X_error_vs_correct = np.empty((cond_avgs.shape[0] * 2, cond_avgs.shape[2]))
+for i in range(cond_avgs.shape[0]):
+  X_error_vs_correct[(i*2):((i*2)+2), :] = cond_avgs[i, :, :]
+#X_error_vs_correct = X_error_vs_correct[:50]
+
+# Error vs Correct labels
+y_error_vs_correct = np.full((1), np.nan)
+y_error = np.full((1), 0)
+y_correct = np.full((1), 1)
+for i in range(cond_avgs.shape[0]):
+  y_error_vs_correct = np.hstack((y_error_vs_correct, y_error, y_correct))
+y_error_vs_correct = np.delete(y_error_vs_correct, 0)
+#y_error_vs_correct = y_error_vs_correct[:50]
+
+# Performance prediction classification
+np.random.seed(0)
+number_clf = 50
+clf_list_error_vs_correct, acc_array_error_vs_correct, coef_array_error_vs_correct = logistic_regression_error_vs_correct(X_error_vs_correct, y_error_vs_correct, number_clf)
+
+#%% Performance prediction post-stats
+print('\n--------------------------------------------------------------------\n\nResults report performance prediction:')
+print('\nAccuracies error vs correct:', acc_array_error_vs_correct)
+print('Mean accuracy error vs correct:', np.mean(acc_array_error_vs_correct))
+print('Standard deviation accuracies error vs correct:', np.std(acc_array_error_vs_correct))
+
+t_error_vs_correct, p_error_vs_correct = stats.ttest_1samp(acc_array_error_vs_correct, 50)
+print('P-value of one-sample t-test with population mean = 50:', '{:.5f}'.format(p_error_vs_correct), '\n\n--------------------------------------------------------------------\n')
+
+coefs_error_vs_correct_averaged = np.mean(coef_array_error_vs_correct, axis = 1)
+coefs_error_vs_correct_std = np.std(coef_array_error_vs_correct, axis = 1)
+
+t_coefs_error_vs_correct, p_coefs_error_vs_correct = stats.ttest_1samp(coef_array_error_vs_correct, 0, axis = 1)
+p_coefs_error_vs_correct_sig = p_coefs_error_vs_correct < .001
+coefs_error_vs_correct_averaged_sig = coefs_error_vs_correct_averaged * p_coefs_error_vs_correct_sig
+
+#%% Performance prediction save results and figures
+np.save(os.path.join('results', 'error_vs_correct', 'accuracies'), acc_array_error_vs_correct)
+np.save(os.path.join('results', 'error_vs_correct', 'coefficients'), coef_array_error_vs_correct)
+np.save(os.path.join('results', 'error_vs_correct', 'coefficients_sig'), coefs_error_vs_correct_averaged_sig)
+
+save_plots_error_vs_correct(coef_array_error_vs_correct, number_clf)
+
+plt_left_averaged, plt_right_averaged = plot_logistic_regression(coefs_error_vs_correct_averaged, 0.02)
+plt_left_averaged.save_as_html(os.path.join('results', 'error_vs_correct', 'plot_left_averaged'))
+plt_right_averaged.save_as_html(os.path.join('results', 'error_vs_correct', 'plot_right_averaged'))
+
+plt_left_error_vs_correct_sig, plt_right_error_vs_correct_sig = plot_logistic_regression(coefs_error_vs_correct_averaged_sig, 0.02)
+plt_left_error_vs_correct_sig.save_as_html(os.path.join('results', 'error_vs_correct', 'plot_left_significant'))
+plt_right_error_vs_correct_sig.save_as_html(os.path.join('results', 'error_vs_correct', 'plot_right_significant'))
+
+#%% Analysis preparation performance prediction fist and second half separated
+# Prepare time-series
+timeseries_task = []
+for subject in subjects:
+  timeseries_task.append(load_timeseries(subject, "WM", concat=False))
+
+task = "WM"
+conditions = ["all_bk_err", "all_bk_cor"]
+cond_avgs_first_half = []
+cond_avgs_second_half = []
+for subject in subjects:
+  # Get the average signal in each region for each condition
+  evs = [load_evs(subject, task, cond) for cond in conditions]
+  
+  n_err_run0 = len(evs[0][0]['onset'])
+  n_err_run1 = len(evs[0][1]['onset'])
+  
+  n_corr_run0 = len(evs[1][0]['onset'])
+  n_corr_run1 = len(evs[1][1]['onset'])
+  
+  indices_run0 = np.random.choice(n_corr_run0, n_err_run0)
+  indices_run1 = np.random.choice(n_corr_run1, n_err_run1)
+  
+  amplitude_random_run0 = evs[1][0]['amplitude'][indices_run0]
+  duration_random_run0 = evs[1][0]['duration'][indices_run0]
+  onset_random_run0 = evs[1][0]['onset'][indices_run0]
+  
+  amplitude_random_run1 = evs[1][1]['amplitude'][indices_run1]
+  duration_random_run1 = evs[1][1]['duration'][indices_run1]
+  onset_random_run1 = evs[1][1]['onset'][indices_run1]
+  
+  zero_dict = {
+      'onset': [],
+      'duration': [],
+      'amplitude': []
+      }
+  
+  if (n_err_run0 == 0) & (n_err_run1 == 0):
+      dict_err_run0 = zero_dict
+      dict_err_run1 = zero_dict
+      
+  if (n_err_run0 == 0) & (n_err_run1 > 0):
+      dict_err_run0 = zero_dict
+      dict_err_run1 = evs[0][1]
+      
+  if (n_err_run0 > 0) & (n_err_run1 == 0):
+      dict_err_run0 = evs[0][0]
+      dict_err_run1 = zero_dict
+      
+  if (n_err_run0 > 0) & (n_err_run1 > 0):
+      dict_err_run0 = evs[0][0]
+      dict_err_run1 = evs[0][1]
+
+  dict_corr_run1 = {
+     'onset': onset_random_run1,
+     'duration': duration_random_run1,
+     'amplitude': amplitude_random_run1
+     }
+      
+  dict_corr_run0 = {
+      'onset': onset_random_run0,
+      'duration': duration_random_run0,
+      'amplitude': amplitude_random_run0
+      }
+  new_evs = list((list((dict_err_run0, dict_err_run1)), list((dict_corr_run0, dict_corr_run1))))
+  
+  dict_err_run0 = new_evs[0][0]
+  dict_err_run1 = new_evs[0][1]
+  dict_corr_run0 = new_evs[1][0]
+  dict_corr_run1 = new_evs[1][1]
+  
+  if n_err_run0 > 0:
+      dict_err_run0_first_half = {
+          'amplitude': dict_err_run0['amplitude'],
+          'duration': dict_err_run0['duration'] / 2,
+          'onset': dict_err_run0['onset']
+          }
+      dict_err_run0_second_half = {
+          'amplitude': dict_err_run0['amplitude'],
+          'duration': dict_err_run0['duration'] / 2,
+          'onset': dict_err_run0['onset'] + 1.25
+          }
+      
+      dict_corr_run0_first_half = {
+          'amplitude': dict_corr_run0['amplitude'],
+          'duration': dict_corr_run0['duration'] / 2,
+          'onset': dict_corr_run0['onset']
+          }
+      dict_corr_run0_second_half = {
+          'amplitude': dict_corr_run0['amplitude'],
+          'duration': dict_corr_run0['duration'] / 2,
+          'onset': dict_corr_run0['onset'] + 1.25
+          }
+  else:
+      dict_err_run0_first_half = zero_dict
+      dict_err_run0_second_half = zero_dict
+      dict_corr_run0_first_half = zero_dict
+      dict_corr_run0_second_half = zero_dict
+
+  if n_err_run1 > 1:
+      dict_err_run1_first_half = {
+          'amplitude': dict_err_run1['amplitude'],
+          'duration': dict_err_run1['duration'] / 2,
+          'onset': dict_err_run1['onset']
+          }
+      dict_err_run1_second_half = {
+          'amplitude': dict_err_run1['amplitude'],
+          'duration': dict_err_run1['duration'] / 2,
+          'onset': dict_err_run1['onset'] + 1.25
+          }
+      
+      dict_corr_run1_first_half = {
+          'amplitude': dict_corr_run1['amplitude'],
+          'duration': dict_corr_run1['duration'] / 2,
+          'onset': dict_corr_run1['onset']
+          }
+      dict_corr_run1_second_half = {
+          'amplitude': dict_corr_run1['amplitude'],
+          'duration': dict_corr_run1['duration'] / 2,
+          'onset': dict_corr_run1['onset'] + 1.25
+          }
+  else:
+      dict_err_run1_first_half = zero_dict
+      dict_err_run1_second_half = zero_dict
+      dict_corr_run1_first_half = zero_dict
+      dict_corr_run1_second_half = zero_dict
+  
+  evs_first_half = list((list((dict_err_run0_first_half, dict_err_run1_first_half)), list((dict_corr_run0_first_half, dict_corr_run1_first_half))))
+  evs_second_half = list((list((dict_err_run0_second_half, dict_err_run1_second_half)), list((dict_corr_run0_second_half, dict_corr_run1_second_half))))
+  
+  avgs_first_half = [selective_average_performance(timeseries_task[subject], ev) for ev in evs_first_half]
+  avgs_second_half = [selective_average_performance(timeseries_task[subject], ev) for ev in evs_second_half]
+  
+  cond_avgs_first_half.append(avgs_first_half)
+  cond_avgs_second_half.append(avgs_second_half)
+  
+cond_avgs_first_half = np.asarray(cond_avgs_first_half)
+cond_avgs_second_half = np.asarray(cond_avgs_second_half)
+
+cond_avgs_first_half = np.delete(cond_avgs_first_half, [np.unique(np.where(np.isnan(cond_avgs_first_half))[0])[0]], axis = 0)
+cond_avgs_second_half = np.delete(cond_avgs_second_half, [np.unique(np.where(np.isnan(cond_avgs_second_half))[0])[0]], axis = 0)
+
+#%% Performance prediction first half analysis
+
+print('\n--------------------------------------------------------------------\nPerformance prediction first half classification starting\n--------------------------------------------------------------------')
+
+# Create design matrix
+X_error_vs_correct_first_half = np.empty((cond_avgs_first_half.shape[0] * 2, cond_avgs_first_half.shape[2]))
+for i in range(cond_avgs_first_half.shape[0]):
+  X_error_vs_correct_first_half[(i*2):((i*2)+2), :] = cond_avgs_first_half[i, :, :]
+#X_error_vs_correct_first_half = X_error_vs_correct_first_half[:50]
+
+# Error vs Correct labels
+y_error_vs_correct_first_half = np.full((1), np.nan)
+y_error_first_half = np.full((1), 0)
+y_correct_first_half = np.full((1), 1)
+for i in range(cond_avgs_first_half.shape[0]):
+  y_error_vs_correct_first_half = np.hstack((y_error_vs_correct_first_half, y_error_first_half, y_correct_first_half))
+y_error_vs_correct_first_half = np.delete(y_error_vs_correct_first_half, 0)
+#y_error_vs_correct_first_half = y_error_vs_correct_first_half[:50]
+
+# Performance prediction classification
+np.random.seed(0)
+number_clf = 50
+clf_list_error_vs_correct_first_half, acc_array_error_vs_correct_first_half, coef_array_error_vs_correct_first_half = logistic_regression_error_vs_correct(X_error_vs_correct_first_half, y_error_vs_correct_first_half, number_clf)
+
+#%% Performance prediction first half post-stats
+print('\n--------------------------------------------------------------------\n\nResults report performance prediction first half:')
+print('\nAccuracies error vs correct first half:', acc_array_error_vs_correct_first_half)
+print('Mean accuracy error vs correct first half:', np.mean(acc_array_error_vs_correct_first_half))
+print('Standard deviation accuracies error vs correct first half:', np.std(acc_array_error_vs_correct_first_half))
+
+t_error_vs_correct_first_half, p_error_vs_correct_first_half = stats.ttest_1samp(acc_array_error_vs_correct_first_half, 50)
+print('P-value of one-sample t-test with population mean = 50:', '{:.5f}'.format(p_error_vs_correct_first_half), '\n\n--------------------------------------------------------------------\n')
+
+coefs_error_vs_correct_first_half_averaged = np.mean(coef_array_error_vs_correct_first_half, axis = 1)
+coefs_error_vs_correct_first_half_std = np.std(coef_array_error_vs_correct_first_half, axis = 1)
+
+t_coefs_error_vs_correct_first_half, p_coefs_error_vs_correct_first_half = stats.ttest_1samp(coef_array_error_vs_correct_first_half, 0, axis = 1)
+p_coefs_error_vs_correct_first_half_sig = p_coefs_error_vs_correct_first_half < .001
+coefs_error_vs_correct_first_half_averaged_sig = coefs_error_vs_correct_first_half_averaged * p_coefs_error_vs_correct_first_half_sig
+
+#%% Performance prediction first half save results and figures
+np.save(os.path.join('results', 'error_vs_correct', 'first_half', 'accuracies'), acc_array_error_vs_correct_first_half)
+np.save(os.path.join('results', 'error_vs_correct', 'first_half', 'coefficients'), coef_array_error_vs_correct_first_half)
+np.save(os.path.join('results', 'error_vs_correct', 'first_half', 'coefficients_sig'), coefs_error_vs_correct_first_half_averaged_sig)
+
+save_plots_error_vs_correct_first_half(coef_array_error_vs_correct_first_half, number_clf)
+
+plt_left_averaged, plt_right_averaged = plot_logistic_regression(coefs_error_vs_correct_first_half_averaged, 0.02)
+plt_left_averaged.save_as_html(os.path.join('results', 'error_vs_correct', 'first_half', 'plot_left_averaged'))
+plt_right_averaged.save_as_html(os.path.join('results', 'error_vs_correct', 'first_half','plot_right_averaged'))
+
+plt_left_error_vs_correct_first_half_sig, plt_right_error_vs_correct_first_half_sig = plot_logistic_regression(coefs_error_vs_correct_first_half_averaged_sig, 0.02)
+plt_left_error_vs_correct_first_half_sig.save_as_html(os.path.join('results', 'error_vs_correct', 'first_half','plot_left_significant'))
+plt_right_error_vs_correct_first_half_sig.save_as_html(os.path.join('results', 'error_vs_correct', 'first_half','plot_right_significant'))
+
+#%% Performance prediction second half analysis
+
+print('\n--------------------------------------------------------------------\nPerformance prediction second half classification starting\n--------------------------------------------------------------------')
+
+# Create design matrix
+X_error_vs_correct_second_half = np.empty((cond_avgs_second_half.shape[0] * 2, cond_avgs_second_half.shape[2]))
+for i in range(cond_avgs_second_half.shape[0]):
+  X_error_vs_correct_second_half[(i*2):((i*2)+2), :] = cond_avgs_second_half[i, :, :]
+#X_error_vs_correct_second_half = X_error_vs_correct_second_half[:50]
+
+# Error vs Correct labels
+y_error_vs_correct_second_half = np.full((1), np.nan)
+y_error_second_half = np.full((1), 0)
+y_correct_second_half = np.full((1), 1)
+for i in range(cond_avgs_second_half.shape[0]):
+  y_error_vs_correct_second_half = np.hstack((y_error_vs_correct_second_half, y_error_second_half, y_correct_second_half))
+y_error_vs_correct_second_half = np.delete(y_error_vs_correct_second_half, 0)
+#y_error_vs_correct_second_half = y_error_vs_correct_second_half[:50]
+
+# Performance prediction classification
+np.random.seed(0)
+number_clf = 50
+clf_list_error_vs_correct_second_half, acc_array_error_vs_correct_second_half, coef_array_error_vs_correct_second_half = logistic_regression_error_vs_correct(X_error_vs_correct_second_half, y_error_vs_correct_second_half, number_clf)
+
+#%% Performance prediction second half post-stats
+print('\n--------------------------------------------------------------------\n\nResults report performance prediction second half:')
+print('\nAccuracies error vs correct second half:', acc_array_error_vs_correct_second_half)
+print('Mean accuracy error vs correct second half:', np.mean(acc_array_error_vs_correct_second_half))
+print('Standard deviation accuracies error vs correct second half:', np.std(acc_array_error_vs_correct_second_half))
+
+t_error_vs_correct_second_half, p_error_vs_correct_second_half = stats.ttest_1samp(acc_array_error_vs_correct_second_half, 50)
+print('P-value of one-sample t-test with population mean = 50:', '{:.5f}'.format(p_error_vs_correct_second_half), '\n\n--------------------------------------------------------------------\n')
+
+coefs_error_vs_correct_second_half_averaged = np.mean(coef_array_error_vs_correct_second_half, axis = 1)
+coefs_error_vs_correct_second_half_std = np.std(coef_array_error_vs_correct_second_half, axis = 1)
+
+t_coefs_error_vs_correct_second_half, p_coefs_error_vs_correct_second_half = stats.ttest_1samp(coef_array_error_vs_correct_second_half, 0, axis = 1)
+p_coefs_error_vs_correct_second_half_sig = p_coefs_error_vs_correct_second_half < .001
+coefs_error_vs_correct_second_half_averaged_sig = coefs_error_vs_correct_second_half_averaged * p_coefs_error_vs_correct_second_half_sig
+
+#%% Performance prediction second half save results and figures
+np.save(os.path.join('results', 'error_vs_correct', 'second_half', 'accuracies'), acc_array_error_vs_correct_second_half)
+np.save(os.path.join('results', 'error_vs_correct', 'second_half', 'coefficients'), coef_array_error_vs_correct_second_half)
+np.save(os.path.join('results', 'error_vs_correct', 'second_half', 'coefficients_sig'), coefs_error_vs_correct_second_half_averaged_sig)
+
+save_plots_error_vs_correct_second_half(coef_array_error_vs_correct_second_half, number_clf)
+
+plt_left_averaged, plt_right_averaged = plot_logistic_regression(coefs_error_vs_correct_second_half_averaged, 0.02)
+plt_left_averaged.save_as_html(os.path.join('results', 'error_vs_correct', 'second_half', 'plot_left_averaged'))
+plt_right_averaged.save_as_html(os.path.join('results', 'error_vs_correct', 'second_half','plot_right_averaged'))
+
+plt_left_error_vs_correct_second_half_sig, plt_right_error_vs_correct_second_half_sig = plot_logistic_regression(coefs_error_vs_correct_second_half_averaged_sig, 0.02)
+plt_left_error_vs_correct_second_half_sig.save_as_html(os.path.join('results', 'error_vs_correct', 'second_half','plot_left_significant'))
+plt_right_error_vs_correct_second_half_sig.save_as_html(os.path.join('results', 'error_vs_correct', 'second_half','plot_right_significant'))
+
+#%% Differences performance prediction first vs second half
+t_halves, p_halves = stats.ttest_ind(acc_array_error_vs_correct_first_half, acc_array_error_vs_correct_second_half)
+print('\n--------------------------------------------------------------------\n\nAccuracy first - second half: t = {:.5f}; p = {:.5f}'.format(t_halves, p_halves))
+
+acc_array_error_vs_correct = np.load(os.path.join('results', 'error_vs_correct', 'accuracies.npy'), allow_pickle = True)
+t_overall_first_half, p_overall_first_half = stats.ttest_ind(acc_array_error_vs_correct, acc_array_error_vs_correct_first_half)
+print('Accuracy whole trial - first half: t = {:.5f}; p = {:.5f}'.format(t_overall_first_half, p_overall_first_half))
+t_overall_second_half, p_overall_second_half = stats.ttest_ind(acc_array_error_vs_correct, acc_array_error_vs_correct_second_half)
+print('Accuracy whole trial - second half: t = {:.5f}; p = {:.5f}'.format(t_overall_second_half, p_overall_second_half), '\n\n--------------------------------------------------------------------\n')
+
+#%% Conjunction analysis
+coefs_0_vs_2_averaged_sig = np.load(os.path.join('results', '0_vs_2', 'coefficients_sig.npy'), allow_pickle = True)
+coefs_stimuli_averaged_sig = np.load(os.path.join('results', 'stimuli', 'coefficients_sig.npy'), allow_pickle = True)
+coefs_error_vs_correct_averaged_sig = np.load(os.path.join('results', 'error_vs_correct', 'coefficients_sig.npy'), allow_pickle = True)
+
+nonzero_0_vs_2 = np.nonzero(coefs_0_vs_2_averaged_sig)
+nonzero_stimuli0, nonzero_stimuli1, nonzero_stimuli2, nonzero_stimuli3 = np.nonzero(coefs_stimuli_averaged_sig[0, :]), np.nonzero(coefs_stimuli_averaged_sig[1, :]), np.nonzero(coefs_stimuli_averaged_sig[2, :]), np.nonzero(coefs_stimuli_averaged_sig[3, :])
+nonzero_stimuli = np.intersect1d(np.intersect1d(np.intersect1d(nonzero_stimuli0, nonzero_stimuli1), nonzero_stimuli2), nonzero_stimuli3)
+nonzero_error_vs_correct = np.nonzero(coefs_error_vs_correct_averaged_sig)
+
+weights_intersect_load_stimuli = np.zeros((360,))
+intersect_load_stimuli = np.intersect1d(nonzero_0_vs_2, nonzero_stimuli)
+weights_intersect_load_stimuli[intersect_load_stimuli] = 1
+
+weights_intersect_stimuli_performance = np.zeros((360,))
+intersect_stimuli_performance = np.intersect1d(nonzero_stimuli, nonzero_error_vs_correct)
+weights_intersect_stimuli_performance[intersect_stimuli_performance] = 1
+
+plt_left_intersect_stimuli_performance, plt_right_intersect_stimuli_performance = plot_logistic_regression(weights_intersect_stimuli_performance, 2.5)
+plt_left_intersect_stimuli_performance.save_as_html(os.path.join('results', 'intersections', 'plot_left_intersect_stimuli_performance'))
+plt_right_intersect_stimuli_performance.save_as_html(os.path.join('results', 'intersections', 'plot_right_intersect_stimuli_performance'))
+
+weights_intersect_load_performance = np.zeros((360,))
+intersect_load_performance = np.intersect1d(nonzero_0_vs_2, nonzero_error_vs_correct)
+weights_intersect_load_performance[intersect_load_performance] = 1
+
+weights_intersect_all = np.zeros((360,))
+intersect_all = np.intersect1d(intersect_load_stimuli, nonzero_error_vs_correct)
+weights_intersect_all[intersect_all] = 1
+
+plt_left_intersect_all, plt_right_intersect_all = plot_logistic_regression(weights_intersect_all, 2.5)
+plt_left_intersect_all.save_as_html(os.path.join('results', 'intersections', 'plot_left_intersect_all'))
+plt_right_intersect_all.save_as_html(os.path.join('results', 'intersections', 'plot_right_intersect_all'))

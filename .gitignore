@@ -1,3 +1,5 @@
 .spyproject
 hcp
-workspace_analysis.spydata
+workspace_analysis_task_stimuli.spydata
+workspace_analysis_performance.spydata
+workspace_analysis_performance_halves.spydata
